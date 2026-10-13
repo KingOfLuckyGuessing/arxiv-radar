@@ -19,11 +19,16 @@ from umap import UMAP
 from hdbscan import HDBSCAN
 
 
-def build_model() -> BERTopic:
-    """BERTopic with the classic UMAP + HDBSCAN stack."""
+def build_model(n_docs: int) -> BERTopic:
+    """BERTopic with the classic UMAP + HDBSCAN stack.
+
+    min_cluster_size scales with corpus size so small fetches don't
+    collapse everything into noise (-1).
+    """
+    min_cluster_size = min(30, max(5, n_docs // 100))
     umap_model = UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric="cosine",
                       random_state=42)
-    hdbscan_model = HDBSCAN(min_cluster_size=15, metric="euclidean",
+    hdbscan_model = HDBSCAN(min_cluster_size=min_cluster_size, metric="euclidean",
                             cluster_selection_method="eom", prediction_data=True)
     vectorizer = CountVectorizer(stop_words="english", ngram_range=(1, 2), min_df=2)
     return BERTopic(
@@ -48,9 +53,14 @@ def main() -> None:
     df = pd.read_parquet(args.input)
     df["published"] = pd.to_datetime(df["published"])
     df = df.sort_values("published").reset_index(drop=True)
+    if len(df) == 0:
+        raise SystemExit(
+            "No papers in the input file. Run `python -m src.fetch` first "
+            "and check that it saved more than 0 papers."
+        )
     docs = (df["title"] + ". " + df["abstract"]).tolist()
 
-    model = build_model()
+    model = build_model(len(docs))
     topics, _ = model.fit_transform(docs)
 
     df["topic"] = topics
@@ -62,6 +72,19 @@ def main() -> None:
     window = pd.Timedelta(weeks=args.window_weeks)
     step = pd.Timedelta(weeks=args.step_weeks)
     start, end = df["published"].min(), df["published"].max()
+    span = end - start
+    if span <= pd.Timedelta(0):
+        raise SystemExit(
+            "All papers share the same timestamp — cannot build time windows. "
+            "Fetch a wider date range with `python -m src.fetch --days-back N`."
+        )
+    if span < window:
+        # Common when --max-results caps a hot category to a few days of papers:
+        # shrink the windows to fit the data instead of producing zero windows.
+        window = span / 4
+        step = window / 4
+        print(f"Note: papers span only {span} — shrinking to {window} windows "
+              f"sliding every {step}.")
     rows = []
     t = start
     while t + window <= end:
@@ -77,6 +100,15 @@ def main() -> None:
                 "share": float(count / max(len(chunk), 1)),
             })
         t += step
+
+    if not rows:
+        raise SystemExit(
+            "No topics found in any window. Likely causes:\n"
+            "  - every document was labeled noise (-1): lower HDBSCAN "
+            "min_cluster_size in src/topics.py\n"
+            "  - windows contain too few papers: fetch a wider date range "
+            "(`python -m src.fetch --days-back N`)"
+        )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

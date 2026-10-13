@@ -16,6 +16,14 @@ import pandas as pd
 
 def detect_emerging(topics: pd.DataFrame, recent_weeks: int, baseline_weeks: int,
                     top_n: int = 15) -> pd.DataFrame:
+    required = {"window_start", "topic", "topic_name", "share"}
+    missing = required - set(topics.columns)
+    if missing:
+        raise SystemExit(
+            f"topics.parquet is missing columns {sorted(missing)} — it was likely "
+            f"written by a failed run. Delete data/topics.parquet and re-run "
+            f"`python -m src.topics`."
+        )
     topics = topics.copy()
     topics["window_start"] = pd.to_datetime(topics["window_start"])
     latest = topics["window_start"].max()
