@@ -1,0 +1,9 @@
+arxiv>=2.1.0
+pandas>=2.0
+pyarrow>=14.0
+bertopic>=0.16
+umap-learn>=0.5
+hdbscan>=0.8
+scikit-learn>=1.3
+plotly>=5.18
+streamlit>=1.32

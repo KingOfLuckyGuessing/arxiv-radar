@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+# Data (regenerate with the pipeline; parquet files are large)
+data/*.parquet
+# Streamlit
+.streamlit/
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
