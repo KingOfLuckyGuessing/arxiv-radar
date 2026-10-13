@@ -1,6 +1,7 @@
 arxiv>=2.1.0
 pandas>=2.0
 pyarrow>=14.0
+requests>=2.31
 bertopic>=0.16
 umap-learn>=0.5
 hdbscan>=0.8

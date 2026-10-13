@@ -32,6 +32,44 @@ python -m src.trends
 streamlit run app/dashboard.py
 ```
 
+## Multi-year backfills
+
+The arXiv API returns HTTP 500 past `start=10000`, so any single query caps
+around ~10k papers. For trends over years, use the OpenAlex fetcher instead —
+free, no API key, native date filters, and cursor pagination built for bulk:
+
+```bash
+# ~3 years of AI papers on arXiv (takes a few minutes; resumable if interrupted)
+python -m src.fetch_openalex --from-date 2023-01-01 --to-date 2026-01-01
+
+# Then run the same pipeline against it:
+python -m src.topics --input data/papers_openalex.parquet --window-weeks 12 --step-weeks 4
+python -m src.trends --input data/topics.parquet --recent-weeks 8 --baseline-weeks 32
+streamlit run app/dashboard.py
+```
+
+Notes on the OpenAlex path:
+
+- It filters to arXiv (`primary_location.source.id:S4306400194`) and the
+  OpenAlex *Artificial Intelligence* subfield (`--subfield 1702`, configurable) —
+  the bulk-mode analog of arXiv categories. Papers keep the same parquet schema
+  as `src/fetch.py`, plus a `cited_by_count` bonus column.
+- Embeddings are cached in `data/embeddings.npy` (keyed to the dataset), so the
+  one-time CPU cost isn't repeated when you re-tune topics. Delete the file to
+  force a recompute.
+- Add `--mailto you@example.com` to join OpenAlex's polite pool (faster, fewer
+  rate limits).
+
+## Which fetcher should I use?
+
+| | `src/fetch.py` (arXiv API) | `src/fetch_openalex.py` (OpenAlex) |
+|---|---|---|
+| Best for | Recent pulls (days–months) | Multi-year backfills |
+| Category filter | Exact arXiv categories | OpenAlex AI subfield (configurable) |
+| Limit | ~10k results per query (API 500s past `start=10000`) | Cursor pagination, no practical limit |
+| Freshness | Real-time | Updated continuously (small lag) |
+| Extras | — | `cited_by_count` per paper |
+
 ## Project structure
 
 - `src/fetch.py` — arXiv API ingestion (polite paging, date cutoff) → parquet
