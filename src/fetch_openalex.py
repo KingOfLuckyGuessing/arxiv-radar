@@ -33,6 +33,30 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(v\d+)?|([a-z-]+\/\d{7})(v\d+)?")
 
 
+def published_from(arxiv_id: str | None, fallback_date: str) -> str:
+    """Derive the true submission date from the arXiv ID.
+
+    OpenAlex's publication_date can reflect re-indexing/DOI events rather than
+    first submission (e.g. arXiv:1506.02216, a 2015 paper, showed up dated
+    2026-05-02 after a Zenodo re-deposit). The arXiv ID itself encodes the
+    original submission year+month, which is what trend windows need.
+    When the ID agrees with OpenAlex's date we keep OpenAlex's day precision;
+    when they disagree we trust the ID (day=01). Unparseable IDs fall back
+    to OpenAlex's date unchanged.
+    """
+    m = re.match(r"^(\d{2})(\d{2})\.\d{4,5}$", (arxiv_id or "").lower())
+    if not m:
+        m = re.match(r"^[a-z-]+\/(\d{2})(\d{2})\d{3}$", (arxiv_id or "").lower())
+    if m:
+        yy = int(m.group(1))
+        yyyy = 2000 + yy if yy < 91 else 1900 + yy  # arXiv began 1991
+        id_ym = f"{yyyy:04d}-{m.group(2)}"
+        if fallback_date[:7] == id_ym:
+            return f"{fallback_date}T00:00:00+0000"
+        return f"{id_ym}-01T00:00:00+0000"
+    return f"{fallback_date}T00:00:00+0000"
+
+
 def reconstruct_abstract(inv_index: dict | None) -> str:
     """OpenAlex stores abstracts as {word: [positions]}; rebuild plain text."""
     if not inv_index:
@@ -75,7 +99,8 @@ def work_to_record(work: dict) -> dict | None:
         "authors": [a["author"]["display_name"] for a in authorships
                     if a.get("author", {}).get("display_name")],
         "categories": [topic.get("display_name")] if topic.get("display_name") else [],
-        "published": f"{pub_date}T00:00:00+0000",
+        # Date from the arXiv ID, not OpenAlex (see published_from).
+        "published": published_from(arxiv_id, pub_date),
         "url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else (landing or work.get("id")),
         "cited_by_count": work.get("cited_by_count", 0),
     }
