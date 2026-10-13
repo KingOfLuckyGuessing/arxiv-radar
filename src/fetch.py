@@ -14,8 +14,13 @@ import pandas as pd
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
-def fetch_papers(categories: list[str], max_results: int, days_back: int) -> pd.DataFrame:
-    """Pull recent papers for the given arXiv categories."""
+def fetch_papers(categories: list[str], max_results: int, days_back: int
+                 ) -> tuple[pd.DataFrame, int]:
+    """Pull recent papers for the given arXiv categories.
+
+    Returns the DataFrame plus the number of raw API results seen (used to
+    detect --max-results truncation).
+    """
     query = " OR ".join(f"cat:{c}" for c in categories)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
@@ -29,7 +34,9 @@ def fetch_papers(categories: list[str], max_results: int, days_back: int) -> pd.
     )
 
     records = []
+    n_seen = 0
     for result in client.results(search):
+        n_seen += 1
         published = result.published.replace(tzinfo=timezone.utc)
         if published < cutoff:
             continue
@@ -46,7 +53,7 @@ def fetch_papers(categories: list[str], max_results: int, days_back: int) -> pd.
                 "url": result.entry_id,
             }
         )
-    return pd.DataFrame(records)
+    return pd.DataFrame(records), n_seen
 
 
 def main() -> None:
@@ -59,11 +66,17 @@ def main() -> None:
     parser.add_argument("--out", default=str(DATA_DIR / "papers.parquet"))
     args = parser.parse_args()
 
-    df = fetch_papers(args.categories, args.max_results, args.days_back)
+    df, n_seen = fetch_papers(args.categories, args.max_results, args.days_back)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out, index=False)
     print(f"Saved {len(df)} papers -> {out}")
+    if n_seen >= args.max_results:
+        # We stopped because of --max-results, not because we ran out of time
+        # window: the date range may be truncated. Fetch in smaller month
+        # chunks for full coverage (see README roadmap).
+        print("WARNING: hit --max-results; results may be truncated. "
+              "For full multi-year coverage, fetch month-by-month.")
 
 
 if __name__ == "__main__":

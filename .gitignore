@@ -6,6 +6,8 @@ __pycache__/
 venv/
 # Data (regenerate with the pipeline; parquet files are large)
 data/*.parquet
+data/*.npy
+data/*.sha
 # Streamlit
 .streamlit/
 # OS / editors

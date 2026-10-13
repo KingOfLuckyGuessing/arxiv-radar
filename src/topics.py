@@ -10,13 +10,47 @@ TODO (your call):
 """
 
 import argparse
+import hashlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from bertopic import BERTopic
 from sklearn.feature_extraction.text import CountVectorizer
 from umap import UMAP
 from hdbscan import HDBSCAN
+
+EMBEDDINGS_CACHE = Path(__file__).resolve().parent.parent / "data" / "embeddings.npy"
+
+
+def _docs_hash(ids: list[str]) -> str:
+    return hashlib.sha1("\n".join(ids).encode()).hexdigest()[:16]
+
+
+def get_embeddings(ids: list[str], docs: list[str],
+                   cache_path: Path = EMBEDDINGS_CACHE) -> np.ndarray:
+    """Embed once, reuse forever.
+
+    Embeddings are the dominant cost of the pipeline (especially on CPU), but
+    they don't change when you re-tune UMAP/HDBSCAN. This caches them keyed by
+    a hash of the document ids, so repeat runs skip straight to modeling.
+    """
+    hash_path = cache_path.with_suffix(".sha")
+    want = _docs_hash(ids)
+    if cache_path.exists() and hash_path.exists() \
+            and hash_path.read_text().strip() == want:
+        print(f"Loading cached embeddings from {cache_path}")
+        return np.load(cache_path)
+
+    print("Computing embeddings (one-time cost; cached for future runs)...")
+    from sentence_transformers import SentenceTransformer  # lazy: keeps --help fast
+    model = SentenceTransformer("all-MiniLM-L6-v2")  # uses CUDA automatically if present
+    embeddings = model.encode(docs, show_progress_bar=True, batch_size=64)
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache_path, embeddings)
+    hash_path.write_text(want)
+    return embeddings
 
 
 def build_model(n_docs: int) -> BERTopic:
@@ -61,8 +95,9 @@ def main() -> None:
         )
     docs = (df["title"] + ". " + df["abstract"]).tolist()
 
+    embeddings = get_embeddings(df["id"].tolist(), docs)
     model = build_model(len(docs))
-    topics, _ = model.fit_transform(docs)
+    topics, _ = model.fit_transform(docs, embeddings=embeddings)
 
     df["topic"] = topics
     topic_info = model.get_topic_info()
