@@ -40,7 +40,9 @@ def fetch_papers(categories: list[str], max_results: int, days_back: int) -> pd.
                 "abstract": " ".join(result.summary.split()),
                 "authors": [a.name for a in result.authors],
                 "categories": result.categories,
-                "published": published.isoformat(),
+                # Fixed format (not isoformat()): consistent for every row, so
+                # downstream pd.to_datetime never hits mixed formats.
+                "published": published.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "url": result.entry_id,
             }
         )

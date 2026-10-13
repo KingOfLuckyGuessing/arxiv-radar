@@ -25,7 +25,10 @@ def detect_emerging(topics: pd.DataFrame, recent_weeks: int, baseline_weeks: int
             f"`python -m src.topics`."
         )
     topics = topics.copy()
-    topics["window_start"] = pd.to_datetime(topics["window_start"])
+    # format="ISO8601": written timestamps mix "…T03:24:04+00:00" and
+    # "…T03:24:04.437500+00:00" (isoformat drops zero microseconds), which
+    # breaks pandas' strict format inference without this.
+    topics["window_start"] = pd.to_datetime(topics["window_start"], format="ISO8601")
     latest = topics["window_start"].max()
 
     recent_cutoff = latest - pd.Timedelta(weeks=recent_weeks)

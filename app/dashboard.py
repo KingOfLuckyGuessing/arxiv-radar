@@ -32,7 +32,7 @@ except FileNotFoundError:
     st.error("No data yet. Run the pipeline first: see README quickstart.")
     st.stop()
 
-topics["window_start"] = pd.to_datetime(topics["window_start"])
+topics["window_start"] = pd.to_datetime(topics["window_start"], format="ISO8601")
 
 # --- Emerging topics ---
 st.header("Emerging topics")

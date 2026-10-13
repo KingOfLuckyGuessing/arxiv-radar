@@ -51,7 +51,8 @@ def main() -> None:
     args = parser.parse_args()
 
     df = pd.read_parquet(args.input)
-    df["published"] = pd.to_datetime(df["published"])
+    # format="ISO8601": arXiv timestamps mix fractional/non-fractional seconds.
+    df["published"] = pd.to_datetime(df["published"], format="ISO8601")
     df = df.sort_values("published").reset_index(drop=True)
     if len(df) == 0:
         raise SystemExit(
@@ -91,9 +92,11 @@ def main() -> None:
         chunk = df[(df["published"] >= t) & (df["published"] < t + window)]
         counts = chunk[chunk["topic"] != -1]["topic"].value_counts()
         for topic_id, count in counts.items():
+            # Fixed strftime format (not isoformat): isoformat() drops zero
+            # microseconds, producing mixed formats that break strict parsers.
             rows.append({
-                "window_start": t.isoformat(),
-                "window_end": (t + window).isoformat(),
+                "window_start": t.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "window_end": (t + window).strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "topic": int(topic_id),
                 "topic_name": names.get(topic_id, str(topic_id)),
                 "count": int(count),
