@@ -2,13 +2,15 @@
 
 Why this exists: the arXiv API returns HTTP 500 past start=10000, capping any
 single query around ~10k results. OpenAlex mirrors arXiv metadata with native
-date filters and cursor pagination, so multi-year backfills are practical:
-free, no API key, ~200 records per request.
+date filters and cursor pagination, so multi-year backfills are practical.
+At this scale OpenAlex requires a free API key (get one in ~30s at
+https://openalex.org/settings/api); pass it via --api-key or the
+OPENALEX_API_KEY environment variable.
 
 Usage:
-    python -m src.fetch_openalex --from-date 2023-01-01 --to-date 2026-01-01
+    python -m src.fetch_openalex --from-date 2023-01-01 --to-date 2026-01-01 --api-key $OPENALEX_API_KEY
     python -m src.fetch_openalex --from-date 2024-01-01 --to-date 2025-01-01 \\
-        --max-results 20000 --out data/papers_2024.parquet --mailto you@example.com
+        --max-results 20000 --out data/papers_2024.parquet
 
 Output schema matches src/fetch.py (id, title, abstract, authors, categories,
 published, url) plus a cited_by_count bonus column. Feed it straight into
@@ -17,6 +19,7 @@ published, url) plus a cited_by_count bonus column. Feed it straight into
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -27,7 +30,7 @@ import requests
 API = "https://api.openalex.org/works"
 ARXIV_SOURCE_ID = "S4306400194"   # "arXiv (Cornell University)", type=repository
 AI_SUBFIELD_ID = "1702"          # OpenAlex subfield "Artificial Intelligence"
-PER_PAGE = 200
+PER_PAGE = 100  # OpenAlex's documented per_page maximum (lowered from 200)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # New-style (2401.12345) and legacy (hep-th/9901001) arXiv identifiers.
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(v\d+)?|([a-z-]+\/\d{7})(v\d+)?")
@@ -111,6 +114,15 @@ def fetch_page(session: requests.Session, params: dict, retries: int = 4) -> dic
         r = session.get(API, params=params, timeout=60)
         if r.status_code == 200:
             return r.json()
+        if r.status_code == 401:
+            # A 401 never heals with retries: OpenAlex requires a free API
+            # key for cursor paging at this scale (keyless budget exhausted).
+            raise SystemExit(
+                "OpenAlex returned HTTP 401: large backfills need a free API key.\n"
+                "Get one in ~30 seconds at https://openalex.org/settings/api\n"
+                "then re-run with --api-key YOUR_KEY (or set OPENALEX_API_KEY).\n"
+                "Partial results were saved — the re-run will resume."
+            )
         if r.status_code == 429 or 500 <= r.status_code < 600:
             time.sleep(2 ** attempt)
             continue
@@ -139,8 +151,12 @@ def main() -> None:
                         help="OpenAlex subfield id (default: 1702 = Artificial Intelligence)")
     parser.add_argument("--max-results", type=int, default=100_000)
     parser.add_argument("--out", default=str(DATA_DIR / "papers_openalex.parquet"))
+    parser.add_argument("--api-key", default=os.environ.get("OPENALEX_API_KEY"),
+                        help="OpenAlex API key (free at openalex.org/settings/api). "
+                             "Required for large backfills; or set OPENALEX_API_KEY.")
     parser.add_argument("--mailto", default=None,
-                        help="Your email: puts you in OpenAlex's polite pool (faster, fewer limits)")
+                        help="Legacy: OpenAlex has ignored mailto since Feb 2026; "
+                             "use --api-key instead.")
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -152,11 +168,17 @@ def main() -> None:
 
     # Resume support: the cursor sidecar lets an interrupted run pick up where
     # it left off (partial parquet is de-duplicated by id on every flush).
+    # The sidecar is versioned by per_page: a cursor minted for a different
+    # page size is not reused (OpenAlex cursors are opaque; resuming across a
+    # page-size change could silently skip rows — a clean re-walk is safe
+    # because dedupe keeps what's already saved).
     cursor = "*"
     if cursor_path.exists():
         try:
             saved = json.loads(cursor_path.read_text())
-            if saved.get("filter") == filter_str and saved.get("cursor"):
+            if (saved.get("filter") == filter_str
+                    and saved.get("cursor")
+                    and saved.get("per_page") == PER_PAGE):
                 cursor = saved["cursor"]
                 print(f"Resuming from saved cursor ({out.name} keeps earlier pages).")
             else:
@@ -168,6 +190,12 @@ def main() -> None:
               "primary_location,authorships,cited_by_count,primary_topic")
     session = requests.Session()
     session.headers["User-Agent"] = "arxiv-radar/1.0 (research project)"
+    if args.api_key:
+        session.headers["Authorization"] = f"Bearer {args.api_key}"
+    else:
+        print("Note: no --api-key given. OpenAlex requires a free API key for "
+              "large backfills (get one at openalex.org/settings/api) — "
+              "expect HTTP 401 once the keyless budget is spent.")
 
     total_seen = 0
     skipped_no_abstract = 0
@@ -192,7 +220,9 @@ def main() -> None:
             n_total = save_partial(buffer, out)
             buffer = []
             cursor = page["meta"].get("next_cursor")
-            cursor_path.write_text(json.dumps({"filter": filter_str, "cursor": cursor}))
+            cursor_path.write_text(json.dumps({"filter": filter_str,
+                                               "cursor": cursor,
+                                               "per_page": PER_PAGE}))
             print(f"  ...{n_total} saved (skipped {skipped_no_abstract} without abstracts)")
 
             if not cursor or total_seen >= args.max_results:
