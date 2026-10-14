@@ -27,12 +27,24 @@ def short_name(name: str, n: int = 38) -> str:
 
 
 @st.cache_data
-def load():
-    papers = pd.read_parquet(DATA_DIR / "papers.parquet")
-    topics = pd.read_parquet(DATA_DIR / "topics.parquet")
-    emerging_path = DATA_DIR / "emerging.parquet"
+def load(suffix: str = ""):
+    """Load one dataset. `suffix` groups papers/topics/emerging files, e.g.
+    papers_quant.parquet + topics_quant.parquet + emerging_quant.parquet."""
+    papers = pd.read_parquet(DATA_DIR / f"papers{suffix}.parquet")
+    topics = pd.read_parquet(DATA_DIR / f"topics{suffix}.parquet")
+    emerging_path = DATA_DIR / f"emerging{suffix}.parquet"
     emerging = pd.read_parquet(emerging_path) if emerging_path.exists() else None
     return papers, topics, emerging
+
+
+def list_datasets() -> dict:
+    """{pretty label: file suffix} for every papers*.parquet in data/."""
+    out = {}
+    for p in sorted(DATA_DIR.glob("papers*.parquet")):
+        suffix = p.stem[len("papers"):]  # "" or "_quant"
+        label = suffix.lstrip("_").replace("_", " ").title() or "Main"
+        out[label] = suffix
+    return out
 
 
 def normalize(df_papers: pd.DataFrame, df_topics: pd.DataFrame) -> tuple:
@@ -93,16 +105,21 @@ def momentum_fig(emerging: pd.DataFrame, topics: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def river_fig(topics: pd.DataFrame, topic_ids: list) -> go.Figure:
-    """Stacked area chart of topic share over time."""
+def river_fig(topics: pd.DataFrame, topic_ids: list,
+              value_col: str = "share") -> go.Figure:
+    """Stacked area chart of topic share (or raw paper count) over time."""
     df = topics[topics["topic"].isin(topic_ids)].sort_values("window_start")
+    is_share = value_col == "share"
     fig = px.area(
-        df, x="window_start", y="share", color="short_name",
-        labels={"window_start": "Week", "share": "Share of papers",
+        df, x="window_start", y=value_col, color="short_name",
+        labels={"window_start": "Week",
+                "share": "Share of papers", "count": "Papers",
                 "short_name": "Topic"},
-        title="Topic river: share of papers over time",
+        title=f"Topic river: {'share of papers' if is_share else 'paper count'} "
+              f"over time",
     )
-    fig.update_yaxes(tickformat=".0%")
+    if is_share:
+        fig.update_yaxes(tickformat=".0%")
     fig.update_layout(height=480, legend=dict(orientation="h", y=-0.25))
     return fig
 
@@ -198,10 +215,22 @@ def main():
     st.caption("Which research topics are heating up? "
                "Interactive trends from recent arXiv papers.")
 
-    try:
-        papers, topics, emerging = load()
-    except FileNotFoundError:
+    datasets = list_datasets()
+    if not datasets:
         st.error("No data yet. Run the pipeline first: see README quickstart.")
+        st.stop()
+    if len(datasets) > 1:
+        choice = st.sidebar.selectbox("Dataset", list(datasets))
+    else:
+        choice = list(datasets)[0]
+    suffix = datasets[choice]
+
+    try:
+        papers, topics, emerging = load(suffix)
+    except FileNotFoundError as e:
+        st.error(f"Dataset '{choice}' is missing its topics file: {e}. "
+                 f"Run `python -m src.topics --input data/papers{suffix}.parquet "
+                 f"--out data/topics{suffix}.parquet`.")
         st.stop()
     papers, topics = normalize(papers, topics)
 
@@ -231,7 +260,11 @@ def main():
             st.info("Run `python -m src.trends` to compute emerging topics.")
 
     with tab_river:
-        st.plotly_chart(river_fig(topics, topic_ids), use_container_width=True)
+        metric = st.radio("Show", ["Share of papers", "Paper count"],
+                          horizontal=True, key="river_metric")
+        value_col = "share" if metric == "Share of papers" else "count"
+        st.plotly_chart(river_fig(topics, topic_ids, value_col),
+                        use_container_width=True)
         st.plotly_chart(heatmap_fig(topics, topic_ids), use_container_width=True)
 
     with tab_papers:
