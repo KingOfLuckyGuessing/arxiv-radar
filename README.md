@@ -75,7 +75,7 @@ Notes on the OpenAlex path:
 - `src/fetch.py` — arXiv API ingestion (polite paging, date cutoff) → parquet
 - `src/topics.py` — BERTopic (UMAP + HDBSCAN + bigram vectorizer) over sliding time windows
 - `src/trends.py` — emerging-topic detection via share-velocity z-scores
-- `app/dashboard.py` — Streamlit: emerging topics table, trend lines, paper browser
+- `app/dashboard.py` — Streamlit: topic momentum bubble chart, topic river + heatmap, citation views, paper browser
 - `data/` — local parquet artifacts (git-ignored; regenerate with the pipeline)
 
 ## How the trend detection works
