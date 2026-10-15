@@ -61,14 +61,19 @@ def published_from(arxiv_id: str | None, fallback_date: str) -> str:
 
 
 def reconstruct_abstract(inv_index: dict | None) -> str:
-    """OpenAlex stores abstracts as {word: [positions]}; rebuild plain text."""
+    """OpenAlex stores abstracts as {word: [positions]}; rebuild plain text.
+
+    Positions are usually 0..N-1 contiguous, but a few records have gaps
+    (or don't start at 0) — iterate over the sorted keys instead of assuming
+    contiguity, so one odd record can't crash a whole backfill.
+    """
     if not inv_index:
         return ""
     positions: dict[int, str] = {}
     for word, idxs in inv_index.items():
         for i in idxs:
             positions[i] = word
-    return " ".join(positions[i] for i in range(len(positions)))
+    return " ".join(positions[i] for i in sorted(positions))
 
 
 def arxiv_id_from(work: dict) -> str | None:
